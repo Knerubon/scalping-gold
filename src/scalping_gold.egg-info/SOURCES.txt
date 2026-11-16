@@ -1,0 +1,8 @@
+pyproject.toml
+src/scalping_gold/__init__.py
+src/scalping_gold/core.py
+src/scalping_gold.egg-info/PKG-INFO
+src/scalping_gold.egg-info/SOURCES.txt
+src/scalping_gold.egg-info/dependency_links.txt
+src/scalping_gold.egg-info/requires.txt
+src/scalping_gold.egg-info/top_level.txt
