@@ -20,3 +20,12 @@ risk/volume/margin/spread checks, account/symbol mutex, write-ahead journal,
 restart recovery, broker-aware BE/trailing/time exits, daily history locks.
 Validation: Python suite 15 passed; native compiler unavailable, so source review
 is not evidence of compilation. Broker fill/gap/restart behavior pending MT5.
+
+Phase 3 complete: UTC historical data validation/aggregation and availability-time
+joins, indicator/features reference, conservative OHLC labels, identical-cost exit
+ablations, Logistic Regression and LightGBM, held-out sigmoid calibration,
+purged/embargoed partitions and expanding walk-forward reports, immutable hashed
+artifacts, default-unapproved loopback inference, strict schema and tester replay.
+Validation: 46 tests passed (includes both actual model fits on synthetic labels).
+No market data, OOS trading evidence, approved model or profitability result exists.
+One dependency deprecation warning remains; it does not affect test results.
