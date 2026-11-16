@@ -13,3 +13,10 @@ Phases: deterministic reference; EA safety/exits; ML/service/replay; validation/
 Phase 1 complete: deterministic strategy predicates, hysteresis, arbitration,
 feature order/hash, risk sizing and hybrid exits with persistence reference.
 Validation: pytest 15 passed. MT5 parity still pending native validation.
+
+Phase 2: MQL5 closed-bar loader, strategy/regime modules, candidate export,
+strict response matching, tester replay path, demo-only orders with SL/TP,
+risk/volume/margin/spread checks, account/symbol mutex, write-ahead journal,
+restart recovery, broker-aware BE/trailing/time exits, daily history locks.
+Validation: Python suite 15 passed; native compiler unavailable, so source review
+is not evidence of compilation. Broker fill/gap/restart behavior pending MT5.
