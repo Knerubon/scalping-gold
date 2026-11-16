@@ -22,7 +22,7 @@ enum ExecutionState { IDLE, CANDIDATE_READY, ML_WAIT, APPROVED, SUBMITTING, OPEN
 ExecutionState state=IDLE;
 RegimeDetector detector;
 int ema5,atr5,rsi5,ema15,slow15,adx15,atr15,emaH1,atrH1;
-datetime lastBar=0;
+datetime lastBar=0,decisionExpiry=0;
 string prefix,dayPrefix;
 bool recoveryBlocked=false,historyOK=false;
 int activeRiskDay=0;
@@ -32,6 +32,21 @@ void Log(string event,string reason,string signal="") {
  Print(row);
  int f=FileOpen("scalping-gold-events.jsonl",FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_SHARE_READ);
  if(f!=INVALID_HANDLE) {FileSeek(f,0,SEEK_END);FileWriteString(f,row+"\n");FileClose(f);}
+}
+string StatePrefix() {
+ string identity=IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))+"|"+AccountInfoString(ACCOUNT_SERVER)+"|"+TradeSymbol;
+ uchar data[],key[],digest[];int n=StringToCharArray(identity,data,0,WHOLE_ARRAY,CP_UTF8);ArrayResize(data,n-1);
+ if(CryptEncode(CRYPT_HASH_SHA256,data,key,digest)!=32) return "";
+ string hash="";for(int i=0;i<12;i++) hash+=StringFormat("%02x",digest[i]);
+ return "SG."+hash+".";
+}
+bool SafeToken(string value,bool hash=false) {
+ for(int i=0;i<StringLen(value);i++) {
+  ushort c=StringGetCharacter(value,i);
+  if(hash) {if(!((c>=48 && c<=57) || (c>=97 && c<=102))) return false;}
+  else if(!((c>=48 && c<=57) || (c>=65 && c<=90) || (c>=97 && c<=122) || c==45 || c==46 || c==95)) return false;
+ }
+ return true;
 }
 bool Demo() {return AccountInfoInteger(ACCOUNT_TRADE_MODE)==ACCOUNT_TRADE_MODE_DEMO;}
 double TickSize() {return SymbolInfoDouble(TradeSymbol,SYMBOL_TRADE_TICK_SIZE);}
@@ -118,7 +133,7 @@ bool StopsValid(int direction,double entry,double sl,double tp,bool modify=false
  MqlTick quote;if(!SymbolInfoTick(TradeSymbol,quote)) return false;
  double point=SymbolInfoDouble(TradeSymbol,SYMBOL_POINT);
  double level=SymbolInfoInteger(TradeSymbol,SYMBOL_TRADE_STOPS_LEVEL)*point;
- if(modify) level=MathMax(level,SymbolInfoInteger(TradeSymbol,SYMBOL_TRADE_FREEZE_LEVEL)*point);
+ level=MathMax(level,SymbolInfoInteger(TradeSymbol,SYMBOL_TRADE_FREEZE_LEVEL)*point);
  level=MathMax(level,TickSize());
  double exit=direction==1 ? quote.bid : quote.ask;
  return sl>0 && tp>0 && direction*(entry-sl)>0 && direction*(tp-entry)>0 && direction*(exit-sl)>=level && direction*(tp-exit)>=level;
@@ -128,13 +143,25 @@ bool StopsValid(int direction,double entry,double sl,double tp,bool modify=false
 bool RecoverSelected() {
  ulong id=(ulong)PositionGetInteger(POSITION_IDENTIFIER);
  string key=PK(id);
- if(Get(key+"r")>0 && Get(key+"strategy")>=1 && Get(key+"strategy")<=3) return true;
+ if(Get(key+"r")>0 && Get(key+"strategy")>=1 && Get(key+"strategy")<=3)
+  return MathAbs(Get(key+"entry")-PositionGetDouble(POSITION_PRICE_OPEN))<TickSize()*.5;
+ // Finalize immutable R only after every entry order has a terminal history state.
+ // This avoids freezing R at an intermediate average during multiple/partial fills.
+ if(!HistorySelectByPosition(id)) return false;
+ for(int i=0;i<HistoryDealsTotal();i++) {
+  ulong deal=HistoryDealGetTicket(i);
+  if(HistoryDealGetInteger(deal,DEAL_ENTRY)!=DEAL_ENTRY_IN) continue;
+  ulong order=(ulong)HistoryDealGetInteger(deal,DEAL_ORDER);
+  if(!HistoryOrderSelect(order)) return false;
+  long orderState=HistoryOrderGetInteger(order,ORDER_STATE);
+  if(orderState!=ORDER_STATE_FILLED && orderState!=ORDER_STATE_CANCELED && orderState!=ORDER_STATE_EXPIRED) return false;
+ }
  if(!GlobalVariableCheck(prefix+"pending_time") || Get(prefix+"pending_time")<=0) return false;
  if((datetime)PositionGetInteger(POSITION_TIME)<(datetime)Get(prefix+"pending_time")-5) return false;
  double entry=PositionGetDouble(POSITION_PRICE_OPEN),initialSL=Get(prefix+"pending_sl");
  int d=PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY ? 1 : -1;
  if(initialSL<=0 || d*(entry-initialSL)<=0) return false;
- bool ok=GV(key+"r",MathAbs(entry-initialSL)) && GV(key+"strategy",Get(prefix+"pending_strategy")) && GV(key+"initial_sl",initialSL);
+ bool ok=GV(key+"entry",entry) && GV(key+"strategy",Get(prefix+"pending_strategy")) && GV(key+"initial_sl",initialSL) && GV(key+"r",MathAbs(entry-initialSL));
  GlobalVariablesFlush();return ok;
 }
 void ManagePositions() {
@@ -143,10 +170,11 @@ void ManagePositions() {
   ulong ticket=PositionGetTicket(i);if(ticket==0 || !IsOwned()) continue;
   state=OPEN;
   bool recovered=RecoverSelected();
-  if(!recovered) {recoveryBlocked=true;Log("recovery","missing_immutable_state");continue;}
+  if(recovered && Get(prefix+"uncertain")>0) {GV(prefix+"uncertain",0);GlobalVariablesFlush();}
+  if(!recovered) {recoveryBlocked=true;Log("recovery","missing_immutable_state");}
   ulong id=(ulong)PositionGetInteger(POSITION_IDENTIFIER);string key=PK(id);
   int d=PositionGetInteger(POSITION_TYPE)==POSITION_TYPE_BUY ? 1 : -1;
-  Strategy strategy=(Strategy)(int)Get(key+"strategy");
+  Strategy strategy=recovered ? (Strategy)(int)Get(key+"strategy") : NONE;
   double entry=PositionGetDouble(POSITION_PRICE_OPEN),sl=PositionGetDouble(POSITION_SL),tp=PositionGetDouble(POSITION_TP),r=Get(key+"r");
   datetime opened=(datetime)PositionGetInteger(POSITION_TIME);
   MqlTick q;if(!SymbolInfoTick(TradeSymbol,q)) continue;
@@ -154,16 +182,20 @@ void ManagePositions() {
   // No new request on a non-demo account, including exits/modifications.
   if(!ConnectedTrade()) continue;
   MqlTradeRequest req={};MqlTradeResult result={};
-  if(TimeCurrent()-opened>=(strategy==BREAK ? 90 : 60)*60) {
+  if(sl<=0 || tp<=0 || TimeCurrent()-opened>=(strategy==BREAK ? 90 : 60)*60) {
+   if(sl<=0 || tp<=0) recoveryBlocked=true;
    req.action=TRADE_ACTION_DEAL;req.symbol=TradeSymbol;req.magic=Magic;req.position=ticket;
    req.type=d==1 ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;req.volume=PositionGetDouble(POSITION_VOLUME);
    req.price=price;req.deviation=MaxDeviationPoints;req.type_filling=Filling();req.comment="SG time exit";
    if(!Demo()) continue;
    bool sent=OrderSend(req,result);
-   Log("time_exit",IntegerToString((long)result.retcode)+(sent ? "_sent" : "_failed"));continue;
+   Log(sl<=0 || tp<=0 ? "protection_emergency_exit" : "time_exit",IntegerToString((long)result.retcode)+(sent ? "_sent" : "_failed"));continue;
   }
+  if(!recovered) continue; // broker protection and conservative 60-minute exit remain active
   double a[];if(CopyBuffer(atr5,0,1,1,a)!=1 || a[0]<=0) continue;
   double proposed=sl,profit=d*(price-entry);
+  double targetTP=strategy==REVERSAL ? tp : RoundPrice(entry+d*r*(strategy==BREAK ? 2.5 : 2),-d);
+  bool targetChanged=MathAbs(targetTP-tp)>=TickSize()*.5;
   if(profit>=(strategy==REVERSAL ? .8 : 1)*r) {
    double be=entry+d*CostAllowancePrice;
    proposed=d==1 ? MathMax(proposed,be) : (proposed<=0 ? be : MathMin(proposed,be));
@@ -174,11 +206,13 @@ void ManagePositions() {
   }
   proposed=RoundPrice(proposed,d);
   if(sl<=0 || tp<=0) {recoveryBlocked=true;Log("guard","missing_broker_protection");}
-  if(d*(proposed-sl)<MathMax(.2*a[0],TickSize())) continue;
+  bool stopChanged=d*(proposed-sl)>=MathMax(.2*a[0],TickSize());
+  if(!stopChanged) proposed=sl;
+  if(!stopChanged && !targetChanged) continue;
   // Modifications may pass actual entry after BE; validate against current quote.
   double level=MathMax(SymbolInfoInteger(TradeSymbol,SYMBOL_TRADE_STOPS_LEVEL),SymbolInfoInteger(TradeSymbol,SYMBOL_TRADE_FREEZE_LEVEL))*SymbolInfoDouble(TradeSymbol,SYMBOL_POINT);
-  if(d*(price-proposed)<MathMax(level,TickSize()) || tp<=0 || d*(tp-price)<level) continue;
-  req.action=TRADE_ACTION_SLTP;req.symbol=TradeSymbol;req.magic=Magic;req.position=ticket;req.sl=proposed;req.tp=tp;
+  if(d*(price-proposed)<MathMax(level,TickSize()) || targetTP<=0 || d*(targetTP-price)<level) continue;
+  req.action=TRADE_ACTION_SLTP;req.symbol=TradeSymbol;req.magic=Magic;req.position=ticket;req.sl=proposed;req.tp=targetTP;
   if(!Demo()) continue;
   bool sent=OrderSend(req,result);
   Log("stop_update",IntegerToString((long)result.retcode)+(sent ? "_sent" : "_failed"));
@@ -189,7 +223,7 @@ bool Value(int handle,int buffer,int shift,double &value) {
  value=a[0];return true;
 }
 bool LoadSnapshot(Snapshot &s) {
- if(Bars(TradeSymbol,PERIOD_M5)<250 || Bars(TradeSymbol,PERIOD_M15)<250 || Bars(TradeSymbol,PERIOD_H1)<250) return false;
+ if(Bars(TradeSymbol,PERIOD_M5)<251 || Bars(TradeSymbol,PERIOD_M15)<251 || Bars(TradeSymbol,PERIOD_H1)<251) return false;
  if(!SeriesInfoInteger(TradeSymbol,PERIOD_M5,SERIES_SYNCHRONIZED) || !SeriesInfoInteger(TradeSymbol,PERIOD_M15,SERIES_SYNCHRONIZED) || !SeriesInfoInteger(TradeSymbol,PERIOD_H1,SERIES_SYNCHRONIZED)) return false;
  MqlRates bars[];ArraySetAsSeries(bars,true);
  if(CopyRates(TradeSymbol,PERIOD_M5,1,4,bars)!=4) return false;
@@ -198,6 +232,7 @@ bool LoadSnapshot(Snapshot &s) {
  int m=iBarShift(TradeSymbol,PERIOD_M15,close-900,false);
  int h=iBarShift(TradeSymbol,PERIOD_H1,close-3600,false);
  if(m<1 || h<1 || iTime(TradeSymbol,PERIOD_M15,m)+900>close || iTime(TradeSymbol,PERIOD_H1,h)+3600>close) return false;
+ if(close-(iTime(TradeSymbol,PERIOD_M15,m)+900)>=900 || close-(iTime(TradeSymbol,PERIOD_H1,h)+3600)>=3600) return false;
  s.m15=iTime(TradeSymbol,PERIOD_M15,m)+900;
  s.o=bars[0].open;s.h=bars[0].high;s.l=bars[0].low;s.c=bars[0].close;s.prev=bars[1].close;s.c3=bars[3].close;
  s.spread=bars[0].spread*SymbolInfoDouble(TradeSymbol,SYMBOL_POINT);
@@ -225,19 +260,30 @@ void Export(const Candidate &c,string request) {
  int f=FileOpen("scalping-gold-candidates.jsonl",FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_SHARE_READ);
  if(f==INVALID_HANDLE) {Log("export","file_open_failed",c.id);return;}
  FileSeek(f,0,SEEK_END);FileWriteString(f,request+"\n");FileClose(f);
+ int plans=FileOpen("scalping-gold-plans.jsonl",FILE_READ|FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_SHARE_READ);
+ if(plans==INVALID_HANDLE) {Log("export","plan_open_failed",c.id);return;}
+ string plan="{\"signal_id\":\""+c.id+"\",\"entry\":"+DoubleToString(c.entry,12)+",\"sl\":"+DoubleToString(c.sl,12)+",\"tp\":"+DoubleToString(c.tp,12)+",\"request\":"+request+"}";
+ FileSeek(plans,0,SEEK_END);FileWriteString(plans,plan+"\n");FileClose(plans);
 }
 bool ValidateResponse(string body,const Candidate &c,datetime now) {
  FlatJson j;if(!j.Parse(body) || j.Count()!=18) return false;
+ if(!j.Integer("direction") || !j.Integer("closed_bar_utc") || !j.Integer("timestamp") || !j.Integer("expires_at")) return false;
  if(j.Text("schema_version")!="1" || j.Text("signal_id")!=c.id || j.Text("symbol")!=TradeSymbol || j.Text("strategy_id")!=StrategyName(c.strategy) || j.Number("direction")!=c.direction || j.Number("closed_bar_utc")!=(double)c.utc) return false;
  if(j.Text("feature_version")!=FEATURE_VERSION || j.Text("feature_hash")!=FEATURE_HASH || j.Text("model_version")!=ApprovedModelVersion || j.Text("model_hash")!=ApprovedModelHash) return false;
  double timestamp=j.Number("timestamp"),expiry=j.Number("expires_at");
  if(timestamp>now+2 || timestamp<now-5 || expiry<=now || expiry>c.utc+300 || expiry<=timestamp) return false;
  double win=j.Number("p_win"),loss=j.Number("p_loss"),timeout=j.Number("p_timeout"),er=j.Number("estimated_net_r");
  if(!MathIsValidNumber(win) || !MathIsValidNumber(loss) || !MathIsValidNumber(timeout) || !MathIsValidNumber(er) || MathAbs(er)>100 || win<0 || loss<0 || timeout<0 || win>1 || loss>1 || timeout>1 || MathAbs(win+loss+timeout-1)>1e-6) return false;
- if(j.Text("reason_code")=="") return false;
- return j.Text("decision")=="APPROVE";
+ string reason=j.Text("reason_code");if(reason=="") return false;
+ for(int i=0;i<StringLen(reason);i++) {
+  ushort ch=StringGetCharacter(reason,i);
+  if(!((ch>=97 && ch<=122) || (ch>=48 && ch<=57) || ch==95)) return false;
+ }
+ if(j.Text("decision")!="APPROVE") return false;
+ decisionExpiry=(datetime)expiry;return true;
 }
 bool Score(const Candidate &c,string request) {
+ decisionExpiry=0;
  if(ApprovedModelVersion=="" || StringLen(ApprovedModelHash)!=64) return false;
  datetime now=TimeCurrent()-BrokerUtcOffsetMinutes*60;
  if(MQLInfoInteger(MQL_TESTER)) {
@@ -256,7 +302,7 @@ bool Score(const Candidate &c,string request) {
  return ValidateResponse(CharArrayToString(response,0,-1,CP_UTF8),c,TimeCurrent()-BrokerUtcOffsetMinutes*60);
 }
 void Execute(Candidate &c) {
- if(!AUTO_TRADING || EmergencyStop || !ConnectedTrade() || recoveryBlocked || !DailyGuard() || HasSymbolExposure()) {Log("guard","entry_blocked",c.id);return;}
+ if(!AUTO_TRADING || EmergencyStop || !ConnectedTrade() || recoveryBlocked || !DailyGuard() || HasSymbolExposure()) {state=LOCKED;Log("guard","entry_blocked",c.id);return;}
  MqlTick q;if(!SymbolInfoTick(TradeSymbol,q) || q.ask<=q.bid || TimeCurrent()-q.time>5) return;
  double point=SymbolInfoDouble(TradeSymbol,SYMBOL_POINT);
  if((q.ask-q.bid)/point>MaxSpreadPoints) return;
@@ -266,6 +312,7 @@ void Execute(Candidate &c) {
  double entry=c.direction==1 ? q.ask : q.bid;
  // Revalidate current quote after ML latency; never chase the approved candidate.
  double atr[];if(CopyBuffer(atr5,0,1,1,atr)!=1 || MathAbs(entry-c.entry)>.5*atr[0]) return;
+ if(c.strategy==BREAK && c.direction*(entry-c.boundary)>.5*atr[0]) return;
  c.sl=RoundPrice(c.sl,c.direction);
  if(c.strategy!=REVERSAL) c.tp=entry+c.direction*MathAbs(entry-c.sl)*(c.strategy==BREAK ? 2.5 : 2);
  c.tp=RoundPrice(c.tp,-c.direction);
@@ -289,7 +336,7 @@ void Execute(Candidate &c) {
  if(Get(prefix+"uncertain")>0 || HasSymbolExposure() || Get(prefix+"last_signal")>=(double)c.utc) {GlobalVariableSet(mutex,0);return;}
  bool persisted=GV(prefix+"pending_sl",c.sl) && GV(prefix+"pending_strategy",(double)c.strategy) && GV(prefix+"pending_time",(double)TimeCurrent()) && GV(prefix+"last_signal",(double)c.utc);
  GlobalVariablesFlush();
- if(!persisted || !Demo() || !DailyGuard()) {GlobalVariableSet(mutex,0);return;}
+ if(!persisted || !Demo() || !DailyGuard() || TimeCurrent()-BrokerUtcOffsetMinutes*60>=decisionExpiry) {GlobalVariableSet(mutex,0);return;}
  state=SUBMITTING;
  if(!GV(prefix+"uncertain",1)) {GlobalVariableSet(mutex,0);return;}
  GlobalVariablesFlush();
@@ -297,16 +344,18 @@ void Execute(Candidate &c) {
  Log("order",IntegerToString((long)result.retcode)+(sent ? "_sent" : "_failed"),c.id);
  // DONE_PARTIAL/PLACED are reconciled as exposure; never resubmit remaining volume.
  // Ambiguous timeout/connection status permanently locks new entries for operator reconciliation.
- if(sent && (result.retcode==TRADE_RETCODE_DONE || result.retcode==TRADE_RETCODE_DONE_PARTIAL || result.retcode==TRADE_RETCODE_PLACED)) GV(prefix+"uncertain",0);
+ if(sent && (result.retcode==TRADE_RETCODE_DONE || result.retcode==TRADE_RETCODE_DONE_PARTIAL)) GV(prefix+"uncertain",0);
  if(result.retcode!=TRADE_RETCODE_DONE && result.retcode!=TRADE_RETCODE_DONE_PARTIAL && result.retcode!=TRADE_RETCODE_PLACED) state=LOCKED;
  ManagePositions();GlobalVariableSet(mutex,0);GlobalVariablesFlush();
 }
 int OnInit() {
  if(!Demo()) {Print("DEMO account required; REAL and CONTEST are rejected");return INIT_FAILED;}
- if(StringFind(TradeSymbol,"XAUUSD")!=0 || !SymbolSelect(TradeSymbol,true) || MaxSpreadPoints<=0 || MaxDeviationPoints<0 || CostAllowancePrice<0 || InferenceTimeoutMs<1 || InferenceTimeoutMs>2000 || MathAbs(BrokerUtcOffsetMinutes)>840) return INIT_PARAMETERS_INCORRECT;
+ if(_Symbol!=TradeSymbol || _Period!=PERIOD_M5 || StringFind(TradeSymbol,"XAUUSD")!=0 || !SymbolSelect(TradeSymbol,true) || MaxSpreadPoints<=0 || MaxDeviationPoints<0 || CostAllowancePrice<0 || InferenceTimeoutMs<1 || InferenceTimeoutMs>2000 || MathAbs(BrokerUtcOffsetMinutes)>840) return INIT_PARAMETERS_INCORRECT;
  if(StringFind(InferenceURL,"http://127.0.0.1:")!=0) return INIT_PARAMETERS_INCORRECT;
- prefix="SG."+IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))+"."+TradeSymbol+"."; // account/symbol mutex, independent of magic
- if(!GlobalVariableCheck(prefix+"mutex")) GlobalVariableSet(prefix+"mutex",0);
+ if(!SafeToken(TradeSymbol) || !SafeToken(ApprovedModelVersion) || !SafeToken(ApprovedModelHash,true)) return INIT_PARAMETERS_INCORRECT;
+ prefix=StatePrefix();if(prefix=="") return INIT_FAILED;
+ // Atomic create-if-absent; temp mutex is not overwritten by another chart.
+ if(!GlobalVariableTemp(prefix+"mutex")) return INIT_FAILED;
  // Never clear a stale mutex automatically: operator must reconcile terminal,
  // broker positions/orders and journal before reset. Position management continues.
  ema5=iMA(TradeSymbol,PERIOD_M5,20,0,MODE_EMA,PRICE_CLOSE);atr5=iATR(TradeSymbol,PERIOD_M5,14);rsi5=iRSI(TradeSymbol,PERIOD_M5,14,PRICE_CLOSE);
@@ -320,16 +369,17 @@ void OnTick() {
  if(!Demo()) {state=LOCKED;return;}
  ManagePositions(); // independent of inference and entry enable switch
  DailyGuard(); // observe floating drawdown even while a position is open
- if(HasSymbolExposure() || recoveryBlocked) return;
+ bool exposed=HasSymbolExposure() || recoveryBlocked;
  datetime bar=iTime(TradeSymbol,PERIOD_M5,0);if(bar<=0 || bar==lastBar) return;
  Snapshot s;if(!LoadSnapshot(s)) {Log("data","not_ready");return;}
  lastBar=bar;
  Candidate c;Regime regime=detector.Update(s);if(!Generate(s,regime,TradeSymbol,c)) return;
  if(Get(prefix+"last_signal")>=(double)c.utc) return;
  state=CANDIDATE_READY;string request=RequestJSON(c);Export(c,request);
+ if(exposed) {state=OPEN;return;} // keep regime/candidate history live, never submit while exposed
  state=ML_WAIT;
  if(!Score(c,request)) {state=IDLE;Log("inference","abstain_or_reject",c.id);return;}
- state=APPROVED;Execute(c);if(!HasSymbolExposure()) state=IDLE;
+ state=APPROVED;Execute(c);if(!HasSymbolExposure() && state!=LOCKED) state=IDLE;
 }
 void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result) {
  if(!Demo()) return;

@@ -16,7 +16,7 @@ struct Candidate {
  datetime utc;
  Strategy strategy;
  int direction;
- double entry,sl,tp;
+ double entry,sl,tp,boundary;
  double f[FEATURE_COUNT];
 };
 string StrategyName(Strategy s) {
@@ -31,8 +31,10 @@ Regime RawRegime(const Snapshot &s) {
   if(s.e20<s.e50 && s.plus<s.minus) return TREND_DOWN;
   return WAIT;
  }
- if(s.adx<20 && s.resistance-s.support>=3*s.a15)
-  return s.a15<=0.8*s.a15mean ? BREAKOUT : RANGE;
+ if(s.adx<20) {
+  if(s.a15<=0.8*s.a15mean) return BREAKOUT;
+  if(s.resistance-s.support>=3*s.a15) return RANGE;
+ }
  return WAIT;
 }
 class RegimeDetector {
@@ -69,6 +71,7 @@ bool Generate(const Snapshot &s,Regime regime,string symbol,Candidate &selected)
  bool found=false;
  for(int d=1;d>=-1;d-=2) {
   Candidate c; c.strategy=NONE;c.direction=d;c.utc=s.utc;
+  c.boundary=d==1 ? s.resistance : s.support;
   c.entry=s.c+(d==1 ? s.spread : 0);c.sl=c.entry-d*1.5*s.atr;c.tp=c.entry+d*3*s.atr;
   if(regime==(d==1 ? TREND_UP : TREND_DOWN)) {
    if((d==1 ? s.l<=s.ema : s.h>=s.ema) && d*(s.c-s.ema)>0 && d*(s.c-s.o)>0 && d*(s.c-s.prev)>0) c.strategy=TREND;

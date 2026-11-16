@@ -24,8 +24,8 @@ def bars():
     )
 
 
-def test_no_future_leakage(bars):
-    cutoff = 3300
+@pytest.mark.parametrize("cutoff", [3300, 3301, 3302])
+def test_no_future_leakage(bars, cutoff):
     before = list(snapshots(bars.iloc[:cutoff]))
     mutated = bars.copy()
     mutated.iloc[cutoff:, :4] += 1000
@@ -112,3 +112,12 @@ def test_portfolio_limits_and_metrics():
     df.net_r = 1.0
     assert len(portfolio(df)) == 5
     assert metrics([-1, 2, -3])["max_drawdown_r"] == 3
+
+
+def test_range_uses_only_bars_closed_at_signal_open(bars):
+    higher = aggregate(bars, 15)
+    for s in list(snapshots(bars))[-24:]:
+        opened = pd.to_datetime(s.time - 300, unit="s", utc=True)
+        known = higher[higher.index + pd.Timedelta(minutes=15) <= opened].iloc[-20:]
+        assert s.support == known.low.min()
+        assert s.resistance == known.high.max()

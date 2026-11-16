@@ -1,6 +1,7 @@
 """Historical extraction, labeling, exit ablations and timestamp-valid replay."""
 
 import argparse
+import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -12,17 +13,24 @@ from .data import extract, read_bars
 from .replay import Costs, label_candidates, metrics, portfolio
 
 
-def prepare(bars_path, output, costs):
+def prepare(bars_path, output, costs, symbol="XAUUSD", server_offset=0):
     df = read_bars(bars_path)
-    selected = list(extract(df))
+    selected = list(extract(df, symbol))
     root = Path(output)
     root.mkdir(parents=True, exist_ok=True)
     with (root / "candidates.jsonl").open("w") as f:
         for c in selected:
             f.write(json.dumps(asdict(c), allow_nan=False) + "\n")
     reports = {"costs": asdict(costs), "candidate_count": len(selected), "exit_modes": {}}
+    reports.update(
+        source_sha256=hashlib.sha256(Path(bars_path).read_bytes()).hexdigest(),
+        symbol=symbol,
+        server_utc_offset_minutes=server_offset,
+    )
     for mode in ("fixed", "be", "trailing", "hybrid"):
         labels = label_candidates(selected, df, costs, mode)
+        if not labels.empty:
+            labels["server_day"] = (labels.time + server_offset * 60) // 86400
         labels.to_csv(root / f"labels-{mode}.csv", index=False)
         reports["exit_modes"][mode] = (
             metrics(portfolio(labels).net_r) if not labels.empty else metrics([])
@@ -78,6 +86,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     prep = sub.add_parser("prepare")
     prep.add_argument("bars")
+    prep.add_argument("--symbol", default="XAUUSD")
+    prep.add_argument("--server-utc-offset-minutes", type=int, default=0)
     prep.add_argument("--output", default="artifacts/data")
     prep.add_argument("--tick-size", type=float, default=0.01)
     prep.add_argument("--slippage", type=float, default=0.05)
@@ -95,6 +105,8 @@ def main():
             args.bars,
             args.output,
             Costs(args.tick_size, args.slippage, args.commission, args.be_allowance),
+            args.symbol,
+            args.server_utc_offset_minutes,
         )
     else:
         export_decisions(args.scores, args.candidates, args.manifest, args.output, args.symbol)

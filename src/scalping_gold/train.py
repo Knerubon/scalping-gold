@@ -159,16 +159,17 @@ def walk_forward(df, kind, folds=3):
     return reports
 
 
-def train_models(df, output, version="research-v1"):
+def train_models(df, output, version="research-v1", synthetic=False):
     validate_dataset(df)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     train, cal, validation, test = purged_split(df)
     report = {
-        "synthetic": False,
+        "synthetic": synthetic,
         "approval": "unapproved",
         "feature_hash": FEATURE_HASH,
         "candidate_count": len(df),
+        "dataset_sha256": hashlib.sha256(df.to_csv(index=False).encode()).hexdigest(),
         "partitions": [len(g) for g in (train, cal, validation, test)],
         "test_start": int(test.time.min()),
         "baseline": metrics(portfolio(test).net_r),
@@ -220,8 +221,11 @@ def main():
     parser.add_argument("labels")
     parser.add_argument("--output", default="artifacts")
     parser.add_argument("--version", default="research-v1")
+    parser.add_argument(
+        "--synthetic", action="store_true", help="mark non-market data ineligible for approval"
+    )
     args = parser.parse_args()
-    train_models(pd.read_csv(args.labels), args.output, args.version)
+    train_models(pd.read_csv(args.labels), args.output, args.version, args.synthetic)
 
 
 if __name__ == "__main__":

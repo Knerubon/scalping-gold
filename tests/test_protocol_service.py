@@ -115,3 +115,28 @@ def test_prediction_failure_and_corrupt_artifact(tmp_path, request_data):
     scorer.model, scorer.manifest, scorer.approved = Dummy(), dict(model_version="bad"), True
     # A valid loaded manifest is checked at load time; malformed metadata never loads.
     assert Scorer(tmp_path).model is None
+
+
+@pytest.mark.parametrize("direction", [True, 1.0, "-1"])
+def test_direction_requires_actual_integer(request_data, direction):
+    request_data["direction"] = direction
+    with pytest.raises(ValidationError):
+        Request(**request_data)
+
+
+def test_slow_prediction_abstains(request_data, monkeypatch):
+    req = Request(**request_data)
+    scorer = Scorer()
+    scorer.model = Dummy()
+    scorer.manifest = {
+        "model_version": req.model_version,
+        "model_hash": req.model_hash,
+        "threshold": 0.6,
+        "threshold_through": req.closed_bar_utc - 1,
+        "class_mean_r": {"LOSS": -1.0, "WIN": 2.0, "TIMEOUT": -0.1},
+    }
+    scorer.approved = True
+    calls = iter([0.0, 2.01])
+    monkeypatch.setattr("scalping_gold.service.time.perf_counter", lambda: next(calls))
+    result = scorer.score(req)
+    assert result.decision == "ABSTAIN" and result.reason_code == "inference_timeout"

@@ -126,3 +126,20 @@ def test_risk(tick):
     v = risk_volume(10000, 2000, 1995, tick, tick * 100, 0.01, 100, 0.01)
     assert v == 0.1
     assert risk_volume(1, 2000, 1995, tick, tick * 100, 0.01, 100, 0.01) == 0
+
+
+def test_breakout_does_not_require_range_reversal_width(snap):
+    s = replace(
+        snap,
+        adx=15,
+        atr15_mean=5,
+        support=105,
+        resistance=110,
+        open=109,
+        low=109,
+        high=111,
+        close=110.5,
+        spread=0,
+    )
+    assert raw_regime(s) == "BREAKOUT"
+    assert candidates(s, "BREAKOUT")[0].strategy == "breakout"

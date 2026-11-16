@@ -9,3 +9,4 @@ artifacts/
 data/
 *.joblib
 *.egg-info/
+config/local-approval.json

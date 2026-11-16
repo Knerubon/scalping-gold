@@ -96,7 +96,10 @@ def snapshots(df):
     m15["atr_mean"] = m15.atr.shift(1).rolling(50).mean()
     # Known range at signal-bar OPEN, not signal-bar CLOSE.
     ranges = pd.DataFrame(
-        {"support": m15.low.rolling(20).min(), "resistance": m15.high.rolling(20).max()},
+        {
+            "support": m15.low.rolling(20).min().to_numpy(),
+            "resistance": m15.high.rolling(20).max().to_numpy(),
+        },
         index=m15.index + pd.Timedelta(minutes=15),
     )
     m15.index += pd.Timedelta(minutes=15)
@@ -150,10 +153,10 @@ def snapshots(df):
             yield s
 
 
-def extract(df):
+def extract(df, symbol="XAUUSD"):
     detector = RegimeDetector()
     for s in snapshots(df):
-        c = arbitrate(candidates(s, detector.update(s)))
+        c = arbitrate(candidates(s, detector.update(s), symbol))
         if c is not None:
             yield c
 

@@ -83,8 +83,11 @@ def raw_regime(s):
         if s.ema20 < s.ema50 and s.plus_di < s.minus_di:
             return "TREND_DOWN"
         return "WAIT"
-    if s.adx < 20 and s.resistance - s.support >= 3 * s.atr15:
-        return "BREAKOUT" if s.atr15 <= 0.8 * s.atr15_mean else "RANGE"
+    if s.adx < 20:
+        if s.atr15 <= 0.8 * s.atr15_mean:
+            return "BREAKOUT"
+        if s.resistance - s.support >= 3 * s.atr15:
+            return "RANGE"
     return "WAIT"
 
 

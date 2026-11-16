@@ -47,6 +47,12 @@ def simulate(candidate, bars, costs=Costs(), mode="hybrid", prepared=False):
     atr = df.loc[df.index < future.index[0], "atr"].iloc[-1]
     if not np.isfinite(atr) or abs(entry - candidate.entry) > 0.5 * atr:
         return None
+    if candidate.strategy == "breakout":
+        # Feature distance is measured from signal close; recover the same bound.
+        close = candidate.entry - (candidate.features["spread_atr"] * atr if d == 1 else 0)
+        boundary = close - d * candidate.features["breakout_distance"] * atr
+        if d * (entry - boundary) > 0.5 * atr:
+            return None
     sl = (
         math.floor(candidate.sl / costs.tick_size)
         if d == 1
@@ -156,7 +162,9 @@ def portfolio(rows, keep=None):
     selected, busy_until, day, count, losses, locked = [], -1, None, 0, 0, False
     equity, baseline = 1.0, 1.0
     for idx, row in rows.sort_values("time").iterrows():
-        this_day = int(row.time) // 86400
+        if row.time < busy_until:
+            continue
+        this_day = int(row.server_day) if "server_day" in rows else int(row.time) // 86400
         if this_day != day:
             day, count, losses, locked, baseline = this_day, 0, 0, False, equity
         if (

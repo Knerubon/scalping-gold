@@ -49,6 +49,15 @@ class Scorer:
                 raise ValueError("invalid_model_metadata")
             if not all(np.isfinite(v) and abs(v) <= 100 for v in manifest["class_mean_r"].values()):
                 raise ValueError("invalid_class_expectancy")
+            for field in ("trained_through", "threshold_through", "evaluation_start"):
+                if type(manifest[field]) is not int or manifest[field] <= 0:
+                    raise ValueError("invalid_model_horizon")
+            if (
+                not manifest["trained_through"]
+                <= manifest["threshold_through"]
+                < manifest["evaluation_start"]
+            ):
+                raise ValueError("invalid_model_chronology")
             model = joblib.load(root / "model.joblib")
             if set(model.classes_) != {"WIN", "LOSS", "TIMEOUT"} or list(
                 model.feature_names_in_
@@ -74,7 +83,11 @@ class Scorer:
                     self.error = ""
         except Exception:
             # No path, artifact payload or account data exposed in health/error logs.
-            log.exception("artifact_load_failed")
+            log.error(
+                json.dumps(
+                    {"event": "artifact_load_failed", "reason": "invalid_or_missing_artifact"}
+                )
+            )
             self.model, self.manifest = None, None
             self.error = "artifact_invalid"
 
@@ -166,6 +179,11 @@ class Scorer:
                     "signal_id": request.signal_id,
                     "decision": base["decision"],
                     "reason": base["reason_code"],
+                    "p_win": base["p_win"],
+                    "p_loss": base["p_loss"],
+                    "p_timeout": base["p_timeout"],
+                    "estimated_net_r": base["estimated_net_r"],
+                    "model_version": request.model_version,
                     "latency_ms": round(latency * 1000, 3),
                 }
             )

@@ -29,3 +29,21 @@ artifacts, default-unapproved loopback inference, strict schema and tester repla
 Validation: 46 tests passed (includes both actual model fits on synthetic labels).
 No market data, OOS trading evidence, approved model or profitability result exists.
 One dependency deprecation warning remains; it does not affect test results.
+
+Phase 4 complete: native fixture/history-export scripts (execution pending),
+EA/Python export parity and identical-OOS evaluation matrix tools, configuration
+examples, GitHub Actions, installation/compile/test/replay instructions, manual
+acceptance checklist, known limitations and captured test results. Final local
+verification: 59 passed, one dependency deprecation warning; Ruff, pip check and
+whitespace checks passed. Source assertions are explicitly not native tests.
+
+Review fixes include range-availability alignment, all-offset future-mutation
+regressions, strict scalar JSON types, breakout quote anti-chase, finalized-fill
+initial R, actual-R targets, unknown-state time exit, emergency missing-protection
+close attempts, account/server/symbol state keys, persistent uncertainty locks,
+floating drawdown observation and approval expiry recheck before submission.
+
+Remaining external validation: MQL5 compilation, native indicator/feature parity,
+real-tick MT5 Tester, broker-specific execution/restart/error scenarios, calibrated
+market costs and genuine OOS evidence/model approval. No account was accessed or
+automatic trading enabled. Draft PR is the review deliverable, not a release.

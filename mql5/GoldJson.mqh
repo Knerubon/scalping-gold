@@ -6,7 +6,7 @@ class FlatJson {
  private:
  string keys[],values[];
  bool strings[];
- void Space(string s,int &p) {while(p<StringLen(s) && StringGetCharacter(s,p)<=32) p++;}
+ void Space(string s,int &p) {while(p<StringLen(s)) {ushort c=StringGetCharacter(s,p);if(c!=32 && c!=9 && c!=10 && c!=13) break;p++;}}
  bool Quoted(string s,int &p,string &v) {
   if(StringGetCharacter(s,p)!=34) return false;
   p++;v="";
@@ -17,6 +17,29 @@ class FlatJson {
    v+=ShortToString(c);
   }
   return false;
+ }
+ bool Numeric(string v) {
+  int p=0,n=StringLen(v);if(n==0) return false;
+  if(StringGetCharacter(v,p)==45) p++;
+  if(p>=n) return false;
+  ushort ch=StringGetCharacter(v,p);
+  if(ch==48) p++;
+  else {
+   if(ch<49 || ch>57) return false;
+   while(p<n && StringGetCharacter(v,p)>=48 && StringGetCharacter(v,p)<=57) p++;
+  }
+  if(p<n && StringGetCharacter(v,p)==46) {
+   p++;int start=p;
+   while(p<n && StringGetCharacter(v,p)>=48 && StringGetCharacter(v,p)<=57) p++;
+   if(p==start) return false;
+  }
+  if(p<n && (StringGetCharacter(v,p)==101 || StringGetCharacter(v,p)==69)) {
+   p++;if(p<n && (StringGetCharacter(v,p)==43 || StringGetCharacter(v,p)==45)) p++;
+   int start=p;
+   while(p<n && StringGetCharacter(v,p)>=48 && StringGetCharacter(v,p)<=57) p++;
+   if(p==start) return false;
+  }
+  return p==n && MathIsValidNumber(StringToDouble(v));
  }
  public:
  bool Parse(string s) {
@@ -33,14 +56,7 @@ class FlatJson {
     while(p<StringLen(s) && StringGetCharacter(s,p)!=44 && StringGetCharacter(s,p)!=125) p++;
     val=StringSubstr(s,start,p-start);StringTrimRight(val);
     if(val=="") return false;
-    // Only canonical JSON numbers accepted, finite checks in Number().
-    bool digit=false;
-    for(int k=0;k<StringLen(val);k++) {
-     ushort ch=StringGetCharacter(val,k);
-     if(ch>=48 && ch<=57) digit=true;
-     else if(ch!=45 && ch!=43 && ch!=46 && ch!=101 && ch!=69) return false;
-    }
-    if(!digit) return false;
+    if(!Numeric(val)) return false;
    }
    int n=ArraySize(keys);ArrayResize(keys,n+1);ArrayResize(values,n+1);ArrayResize(strings,n+1);
    keys[n]=key;values[n]=val;strings[n]=quoted;
@@ -53,6 +69,11 @@ class FlatJson {
  bool Has(string key) {for(int i=0;i<ArraySize(keys);i++) if(keys[i]==key) return true;return false;}
  string Text(string key) {for(int i=0;i<ArraySize(keys);i++) if(keys[i]==key && strings[i]) return values[i];return "";}
  double Number(string key) {for(int i=0;i<ArraySize(keys);i++) if(keys[i]==key && !strings[i]) return StringToDouble(values[i]);return EMPTY_VALUE;}
+ bool Integer(string key) {
+  for(int i=0;i<ArraySize(keys);i++) if(keys[i]==key && !strings[i])
+   return StringFind(values[i],".")<0 && StringFind(values[i],"e")<0 && StringFind(values[i],"E")<0;
+  return false;
+ }
  int Count() {return ArraySize(keys);}
 };
 #endif

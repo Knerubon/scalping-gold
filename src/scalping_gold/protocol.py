@@ -3,13 +3,20 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .core import FEATURE_HASH, FEATURE_VERSION, FEATURES
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+    @field_validator("direction", mode="before", check_fields=False)
+    @classmethod
+    def exact_direction(cls, value):
+        if type(value) is not int or value not in (-1, 1):
+            raise ValueError("direction must be integer +1 or -1")
+        return value
 
 
 class Request(StrictModel):

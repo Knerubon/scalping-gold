@@ -70,3 +70,22 @@ def test_five_trade_cap(tmp_path):
         ledger.reconcile(str(i), "filled")
     assert not reserve(ledger, "six")
     ledger.close()
+
+
+def test_two_connections_cannot_reserve_two_orders(tmp_path):
+    path = tmp_path / "state.db"
+    first, second = GuardLedger(path), GuardLedger(path)
+    first.observe(1, 10000)
+    assert reserve(first, "a")
+    assert not reserve(second, "b")
+    first.close()
+    second.close()
+
+
+def test_auto_defaults_disabled(tmp_path):
+    ledger = GuardLedger(tmp_path / "state.db")
+    ledger.observe(1, 10000)
+    assert not ledger.reserve(
+        "id", 1, account_mode="DEMO", protective_stops=True, inference="APPROVE"
+    )
+    ledger.close()
