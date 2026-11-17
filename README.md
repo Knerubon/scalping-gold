@@ -46,7 +46,7 @@ EA ตรวจเงื่อนไขบนแท่งราคาที่�
 | กลยุทธ์ | หลักการเข้า | SL และ TP เริ่มต้น |
 |---|---|---|
 | Trend Pullback | ตามแนวโน้ม M15; ADX ≥25, EMA20/EMA50 และ DI ไปทางเดียวกัน; M5 ย่อแตะ EMA20 แล้วปิดกลับยืนตามทิศทาง | SL ระยะ 1.5 × ATR(M5), TP เป้าหมาย 2R |
-| Range Reversal | ADX(M15) <20 และกรอบก่อนหน้ากว้าง ≥3 × ATR(M15); M5 ใกล้ขอบกรอบ พร้อม RSI และแท่งกลับตัว | SL อยู่นอกขอบกรอบอีก 0.5 × ATR(M5); TP กลางกรอบเมื่อ RR ≥1.5 |
+| Range Reversal | ADX(M15) <20 และกรอบก่อนหน้ากว้าง ≥3 × ATR(M15); ราคาปิด M5 ห่างขอบกรอบไม่เกิน 0.25 × ATR(M15) พร้อม RSI และแท่งกลับตัว | SL อยู่นอกขอบกรอบอีก 0.5 × ATR(M5); TP กลางกรอบเมื่อ RR ≥1.5 |
 | Breakout | ตลาด ADX <20 ที่ ATR(M15) ≤0.8 เท่าของค่าเฉลี่ย ATR ก่อนหน้า 50 แท่ง; M5 ปิดพ้นกรอบ ≥0.1 ATR และ body ≥60% ของช่วงแท่ง | SL ระยะ 1.5 × ATR(M5), TP เป้าหมาย 2.5R; จำกัดการไล่ราคาเข้าไม่เกิน 0.5 ATR(M5) จากขอบกรอบ |
 
 BUY และ SELL ใช้เงื่อนไขกลับด้านกัน ตัวอย่าง Trend BUY ต้องปิดเหนือ EMA20,
@@ -194,11 +194,20 @@ EA ต้องมีข้อมูลอย่างน้อย 250 แท่
 
 รัน `GoldCoreTests` จาก Scripts บนกราฟ Demo สคริปต์นี้ไม่ส่งออร์เดอร์
 ต้องตรวจผล `GoldCoreTests failures=0` ใน Experts จากนั้นคัดลอก
-`MQL5/Files/GoldCoreTests.csv` ไปไว้ในโฟลเดอร์ repository แล้วใช้ Python ที่ติดตั้งในหัวข้อถัดไป:
+`MQL5/Files/GoldCoreTests.csv` ไปไว้ในโฟลเดอร์ repository แล้วใช้ Python ใน virtual environment
+ที่ติดตั้งตามหัวข้อ 4.1 (สคริปต์ต้อง import package `scalping_gold` จึงต้องติดตั้งก่อน):
+
+```powershell
+.\.venv\Scripts\python.exe scripts/verify_parity.py GoldCoreTests.csv
+```
+
+บน macOS ที่ Activate `.venv` แล้ว:
 
 ```sh
 python scripts/verify_parity.py GoldCoreTests.csv
 ```
+
+ถ้าตรงกันจะพิมพ์ `PASS: six native candidate and feature snapshots match Python`
 
 นี่เป็นการตรวจ fixture ของกลยุทธ์และ features หกกรณี ยังไม่ครอบคลุม indicator
 จากข้อมูลโบรกเกอร์หรือพฤติกรรมส่งคำสั่งจริง และยังไม่มีหลักฐานว่า native script นี้ผ่านแล้ว
@@ -385,6 +394,12 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" | ConvertTo-Json
 
 ```sh
 curl http://127.0.0.1:8000/health
+```
+
+ตัวอย่างผลเมื่อโหลดโมเดลได้แต่ยังไม่อนุมัติ (`feature_hash` ย่อไว้):
+
+```json
+{"status":"shadow_or_unavailable","model_loaded":true,"approved":false,"feature_version":"sg-v1","feature_hash":"1de86e48..."}
 ```
 
 `model_loaded=true` แปลว่าโหลดโมเดลสำเร็จ ส่วน `approved=false` เป็นสถานะปกติก่อนมีการอนุมัติ
@@ -607,7 +622,9 @@ $env:SG_APPROVAL="config/local-approval.json"
 5. ใช้ local agent สำหรับเริ่มตรวจสอบ ไม่ถือว่าการส่งไฟล์ให้ cloud/remote agent ผ่านแล้ว
 
 ยังไม่มีระบบส่ง Replay ไป agent แบบอัตโนมัติใน repository
-Replay มีเวลาอนุมัติสั้นเพื่อปฏิเสธคำตอบเก่า หาก tick มาถึงช้าอาจไม่เข้าแม้มีสัญญาณ
+Replay มีเวลาอนุมัติสั้นเพื่อปฏิเสธคำตอบเก่า: `expires_at` ของแต่ละบรรทัดคือ
+`closed_bar_utc + 5` วินาที (ดูได้ในไฟล์ที่สร้าง) หาก tick แรกหลังปิดแท่งมาถึงช้ากว่านั้น
+EA จะไม่เข้าแม้มีสัญญาณ
 ห้ามขยายเวลาหรือแก้ไฟล์ย้อนหลังเพื่อทำให้รายงานดูดีขึ้น
 
 ### 6.4 ตั้งค่า Strategy Tester
@@ -854,9 +871,16 @@ mutex ป้องกันการส่งพร้อมกันอยู�
 
 หลักฐานที่บันทึกไว้ใน [docs/test-results.txt](docs/test-results.txt):
 **59 tests passed** บน Linux/Python 3.12.14 พร้อม dependency deprecation warning หนึ่งรายการ
-Ruff และ `pip check` ผ่าน และ CI ของ implementation commit `5df6e08` ผ่าน Python 3.11/3.12
+Ruff และ `pip check` ผ่าน และ GitHub Actions (`Python and contract tests`) ผ่านทั้ง Python 3.11/3.12
+บน commit `5df6e08` และ `092c5f7`
 ดูเวอร์ชันที่ใช้จริงใน [docs/python-tested.txt](docs/python-tested.txt)
 ตัวเลขนี้เป็นผลของ implementation ชุดที่บันทึก ไม่ใช่ผลการทดสอบ MT5 บนเครื่องของผู้อ่าน
+
+ตอนปรับคู่มือนี้ได้รัน `pytest` ซ้ำบน Linux/Python 3.13 (59 passed) และลองรันคำสั่ง Python
+ตามคู่มือ ได้แก่ `prepare`, `scalping_gold.train --synthetic`, `evaluate_matrix.py`, `replay`
+และ `serve.py` + `/health` บน**ข้อมูลราคาสังเคราะห์แบบสุ่ม** เพื่อยืนยันว่าคำสั่ง ชื่อ arguments
+และไฟล์ผลลัพธ์ตรงกับที่เขียนไว้ ผล Replay ทุกบรรทัดเป็น `ABSTAIN` / `model_unapproved` ตามที่คาด
+นี่เป็นการตรวจคำสั่งเท่านั้น ไม่ใช่ผลวิจัย ผลกำไร หรือการทดสอบ MT5
 
 การ train และ scoring ที่ทดสอบอัตโนมัติใช้ synthetic fixtures
 การทดสอบ reference ledger ไม่ใช่การส่งคำสั่งผ่าน MT5 และ source assertions ไม่ใช่การคอมไพล์ MQL5
