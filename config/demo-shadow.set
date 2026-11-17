@@ -1,0 +1,15 @@
+; Research-only defaults. Broker thresholds and UTC offset MUST be checked.
+AUTO_TRADING=false
+EmergencyStop=false
+TradeSymbol=XAUUSD
+Magic=16012026
+BrokerUtcOffsetMinutes=0
+MaxSpreadPoints=50
+MaxDeviationPoints=10
+CostAllowancePrice=0.20
+InferenceURL=http://127.0.0.1:8000/score
+InferenceTimeoutMs=2000
+ApprovedModelVersion=
+ApprovedModelHash=
+ExportCandidates=true
+ReplayFile=

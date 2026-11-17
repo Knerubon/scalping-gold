@@ -1,0 +1,6 @@
+{
+  "approved": false,
+  "reviewer": "",
+  "model_hash": "REPLACE_WITH_EXACT_MODEL_SHA256_AFTER_REVIEW",
+  "evaluation_sha256": "REPLACE_WITH_SHA256_OF_evaluation.json_AFTER_REVIEW"
+}

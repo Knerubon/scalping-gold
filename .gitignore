@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.ex5
+*.log
+artifacts/
+data/
+*.joblib
+*.egg-info/
+config/local-approval.json
